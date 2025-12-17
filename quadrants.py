@@ -3,6 +3,7 @@ import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets
 from pylsl import StreamInlet, resolve_byprop
 from scipy.signal import butter, sosfilt, sosfilt_zi
+import pandas as pd
 import sys
 
 # --- CONFIGURATION ---
@@ -16,7 +17,8 @@ BANDS = [
     ('Delta(0.5-4Hz)', 0.5, 4,  'r'),   # Red
     ('Theta(4-8Hz)', 4,   8,  'y'),   # Yellow
     ('Alpha(8-13Hz)', 8,   13, 'g'),   # Green
-    ('Beta(13-30Hz)',  13,  30, 'c')    # Cyan
+    ('Beta(13-30Hz)',  13,  30, 'c'),   # Cyan
+    ('Gamma(30-44Hz)', 30,  44, 'm')    # Magenta
 ]
 
 # Map physical sensors to the grid layout
@@ -86,7 +88,7 @@ class SignalProcessor:
             
         return self.buffers
 
-class MasterDashboard(QtWidgets.QMainWindow):
+class Quadrants(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
         
@@ -100,16 +102,96 @@ class MasterDashboard(QtWidgets.QMainWindow):
         self.graph_widget = pg.GraphicsLayoutWidget()
         self.layout.addWidget(self.graph_widget)
         
-        # 2. Connect to Stream
-        print("Looking for stream...")
-        from stream_helper import resolve_stream; streams = resolve_stream(timeout=5)
-        if not streams:
-            print("No stream found! Run 'muselsl stream' first.")
-            sys.exit(1)
-        self.inlet = StreamInlet(streams[0])
+        # 2. Connect to Stream - OPTIONAL NOW (Only if no file loaded)
+        # We don't block here anymore. We wait for check_stream or file load.
+        # But for backward compatibility with standalone run, we can try.
+        self.init_plots()
 
-        self.x_axis = np.linspace(-WINDOW_SECONDS, 0, BUFFER_SIZE)
-        
+    def load_stream(self):
+        print("Looking for stream...")
+        from pylsl import StreamInlet, resolve_byprop
+        from stream_helper import resolve_stream; streams = resolve_stream(timeout=5)
+        if streams:
+            self.inlet = StreamInlet(streams[0])
+            self.x_axis = np.linspace(-WINDOW_SECONDS, 0, BUFFER_SIZE)
+            
+            # Start Update Loop
+            self.timer = QtCore.QTimer()
+            self.timer.setInterval(33) # ~30 FPS
+            self.timer.timeout.connect(self.update)
+            self.timer.start()
+        else:
+             print("No stream found.")
+
+    def load_static_file(self, csv_path):
+        """Loads a static CSV file and displays the whole thing."""
+        print(f"Quadrants Loading: {csv_path}")
+        if hasattr(self, 'timer'):
+            self.timer.stop()
+            
+        try:
+            df = pd.read_csv(csv_path)
+            
+            # Extract Data (Expected 4 cols)
+            # Try finding standard columns or just take 1-4
+            cols = ['TP9', 'AF7', 'AF8', 'TP10']
+            if all(c in df.columns for c in cols):
+                data = df[cols].values
+            else:
+                data = df.iloc[:, 1:5].values # Assume timestamp is 0, then 4 sensors
+            
+            # Process Full Data
+            # Create a time axis based on SF
+            total_samples = len(data)
+            duration = total_samples / SF
+            t_axis = np.linspace(0, duration, total_samples)
+            
+            # Reuse logic? We need to iterate over bands.
+            # But SignalProcessor works on chunks. 
+            # We effectively want to filter the WHOLE signal.
+            
+            for i, (name, idx, r, c) in enumerate(SENSOR_LAYOUT):
+                sensor_data = data[:, idx]
+                
+                # We can use scipy.signal.sosfilt on the whole array
+                # For each band...
+                for b_i, (_, low, high, _) in enumerate(BANDS):
+                    # 1. Bandpass
+                    sos_bp = butter(3, [low/(SF/2), high/(SF/2)], btype='band', output='sos')
+                    wave = sosfilt(sos_bp, sensor_data)
+                    
+                    # 2. Rectify + Log
+                    wave = np.log1p(np.abs(wave))
+                    
+                    # 3. Lowpass
+                    sos_lp = butter(1, SMOOTHING_FREQ/(SF/2), btype='low', output='sos')
+                    envelope = sosfilt(sos_lp, wave)
+                    
+                    # Update Curve
+                    self.curves[idx][b_i].setData(t_axis, envelope)
+                    self.graph_widget.getItem(r, c).setXRange(0, duration)
+            
+            # Global Average (calculate average of envelopes or envelope of averages?)
+            # Dashboard logic was: Average RAW data, then process.
+            # Let's match that.
+            avg_data = np.mean(data, axis=1)
+            for b_i, (_, low, high, _) in enumerate(BANDS):
+                sos_bp = butter(3, [low/(SF/2), high/(SF/2)], btype='band', output='sos')
+                wave = sosfilt(sos_bp, avg_data)
+                wave = np.log1p(np.abs(wave))
+                sos_lp = butter(1, SMOOTHING_FREQ/(SF/2), btype='low', output='sos')
+                envelope = sosfilt(sos_lp, wave)
+                
+                self.curves['avg'][b_i].setData(t_axis, envelope)
+                self.graph_widget.getItem(0, 0).setXRange(0, duration)
+                
+        except Exception as e:
+            print(f"Error loading file: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def init_plots(self):
+        """Initializes the processors and plot curves."""
         # 3. Initialize Processors & Plots
         self.processors = {} # Stores the math engines
         self.curves = {}     # Stores the visual lines
@@ -144,12 +226,6 @@ class MasterDashboard(QtWidgets.QMainWindow):
                 c = p.plot(pen=pg.mkPen(color, width=2))
                 self.curves[idx].append(c)
 
-        # 4. Start Update Loop
-        self.timer = QtCore.QTimer()
-        self.timer.setInterval(33) # ~30 FPS
-        self.timer.timeout.connect(self.update)
-        self.timer.start()
-
     def update(self):
         # Pull data
         chunk, _ = self.inlet.pull_chunk(timeout=0.0)
@@ -166,7 +242,7 @@ class MasterDashboard(QtWidgets.QMainWindow):
             global_avg_data = np.mean(chunk_np, axis=1)
             
             avg_buffers = self.processors['avg'].process_and_store(global_avg_data)
-            for i in range(4):
+            for i in range(len(BANDS)):
                 self.curves['avg'][i].setData(self.x_axis, avg_buffers[i])
 
             # 3. Update Individual Sensors
@@ -175,11 +251,13 @@ class MasterDashboard(QtWidgets.QMainWindow):
                 sensor_data = chunk_np[:, idx]
                 
                 sensor_buffers = self.processors[idx].process_and_store(sensor_data)
-                for i in range(4):
+                for i in range(len(BANDS)):
                     self.curves[idx][i].setData(self.x_axis, sensor_buffers[i])
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
-    window = MasterDashboard()
+    window = Quadrants()
+    # If running standalone, assume we want Live mode immediately
+    window.load_stream()
     window.show()
     sys.exit(app.exec())

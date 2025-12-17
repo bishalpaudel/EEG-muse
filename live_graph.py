@@ -30,11 +30,17 @@ class LiveMuseGraph(QtWidgets.QMainWindow):
         self.graph_widget = pg.GraphicsLayoutWidget()
         self.layout.addWidget(self.graph_widget)
 
-        # --- 1. Connect to EEG Stream ---
+        # --- 1. Connect to Stream ---
+        # OPTIONAL: Only connecting if load_stream is called or if we want to force check.
+        # Logic moved to load_stream() for consistency.
+        self.init_plots()
+
+    def load_stream(self):
         print("Looking for EEG stream...")
         from stream_helper import resolve_stream; streams = resolve_stream(timeout=5)
         if not streams:
-            raise RuntimeError("Could not find EEG stream. Run 'muselsl stream' first.")
+            print("Could not find EEG stream. Run 'muselsl stream' first.")
+            return # Don't raise error, just return logic
         
         self.inlet_eeg = StreamInlet(streams[0])
         print("EEG Stream found!")
@@ -46,6 +52,78 @@ class LiveMuseGraph(QtWidgets.QMainWindow):
             self.inlet_markers = StreamInlet(marker_streams[0])
             print("Marker stream found.")
 
+        # Start Update Loop
+        self.timer = QtCore.QTimer()
+        self.timer.setInterval(int(1000 / UPDATE_FPS))
+        self.timer.timeout.connect(self.update)
+        self.timer.start()
+
+    def load_static_file(self, csv_path):
+        """Analyze entire file and plot trends."""
+        print(f"LiveGraph Loading: {csv_path}")
+        if hasattr(self, 'timer'):
+            self.timer.stop()
+            
+        try:
+            df = pd.read_csv(csv_path)
+            cols = ['TP9', 'AF7', 'AF8', 'TP10']
+            if all(c in df.columns for c in cols):
+                data = df[cols].values
+            else:
+                data = df.iloc[:, 1:5].values
+                
+            n_samples = len(data)
+            duration = n_samples / SF
+            
+            # Sliding window analysis
+            # Window = 1 sec (SF), Step = 0.1 sec (SF/10)
+            window_size = SF
+            step_size = int(SF / UPDATE_FPS)
+            
+            timestamps = []
+            band_series = [[] for _ in range(5)]
+            
+            # Iterate through file
+            for start in range(0, n_samples - window_size, step_size):
+                end = start + window_size
+                chunk = data[start:end]
+                
+                # timestamps.append(end / SF) # End of window time
+                # Actually, let's map to start or center? End is fine.
+                # But we want 0 to Duration.
+                timestamps.append(start / SF) 
+                
+                powers = self.calculate_band_powers(chunk)
+                for i in range(5):
+                    band_series[i].append(powers[i])
+                    
+            # Convert to arrays
+            t_axis = np.array(timestamps)
+            
+            # Update Plots
+            self.plot.setXRange(0, duration)
+            
+            for i in range(5):
+                # We don't have "Raw" vs "Trend" in static as much, 
+                # but we can smooth the static trend for the "Trend" line
+                # and show the raw calculation for "Raw".
+                
+                raw_curve = np.array(band_series[i])
+                
+                # Simple moving average for trend
+                series = pd.Series(raw_curve)
+                trend_curve = series.rolling(window=AVERAGE_TRENDLINE_PERIOD, center=True).mean().fillna(method='bfill').fillna(method='ffill').values
+                
+                self.curves_raw[i].setData(t_axis, raw_curve)
+                self.curves_trend[i].setData(t_axis, trend_curve)
+                
+        except Exception as e:
+            print(f"Error loading file in Live Graph: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def init_plots(self):
+        """Initializes the buffers and plot curves."""
         # --- 2. Setup Buffers ---
         # Buffer for raw audio to calculate FFT (1 second window for stability)
         self.raw_buffer = np.zeros((SF * 2, 4)) 
@@ -77,12 +155,6 @@ class LiveMuseGraph(QtWidgets.QMainWindow):
             c_trend = self.plot.plot(pen=pg.mkPen(color, width=3), name=f"{name} (Trend)")
             self.curves_raw.append(c_raw)
             self.curves_trend.append(c_trend)
-
-        # --- 4. Start Update Loop ---
-        self.timer = QtCore.QTimer()
-        self.timer.setInterval(int(1000 / UPDATE_FPS))
-        self.timer.timeout.connect(self.update)
-        self.timer.start()
 
     def calculate_band_powers(self, eeg_data):
         """
@@ -165,5 +237,6 @@ class LiveMuseGraph(QtWidgets.QMainWindow):
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
     window = LiveMuseGraph()
+    window.load_stream() # Default to live
     window.show()
     sys.exit(app.exec())
