@@ -101,6 +101,11 @@ class MuseMasterLauncher(QtWidgets.QMainWindow):
         self.btn_play.clicked.connect(self.on_play_clicked)
         playback_layout.addWidget(self.btn_play)
         
+        self.btn_compare = QtWidgets.QPushButton("Compare")
+        self.btn_compare.setStyleSheet("background-color: #9C27B0; color: white; font-weight: bold; padding: 10px;")
+        self.btn_compare.clicked.connect(self.open_comparison_window)
+        playback_layout.addWidget(self.btn_compare)
+        
         self.btn_live = QtWidgets.QPushButton("Switch to Live")
         self.btn_live.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 10px;")
         self.btn_live.clicked.connect(self.switch_to_live)
@@ -232,6 +237,16 @@ class MuseMasterLauncher(QtWidgets.QMainWindow):
         else:
             # If not loaded, restart the check timer
             self.check_stream_timer.start()
+
+    def open_comparison_window(self):
+        try:
+            from compare_window import CompareWindow
+            self.compare_win = CompareWindow()
+            self.compare_win.show()
+        except ImportError as e:
+            QtWidgets.QMessageBox.critical(self, "Error", f"Could not load Comparison Module: {e}")
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Error", f"Error launching comparison: {e}")
 
     def toggle_recording(self):
         is_recording = self.btn_record.isChecked()

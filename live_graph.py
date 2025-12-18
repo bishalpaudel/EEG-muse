@@ -3,20 +3,16 @@ import pandas as pd
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore, QtWidgets
 from pylsl import StreamInlet, resolve_byprop
-from scipy.signal import welch
+# from scipy.signal import welch # Removed, now in helper
 import sys
+from analysis_helper import BANDS, BAND_NAMES, WAVE_COLORS, SF, calculate_band_powers
 
 # --- SETTINGS ---
 GRAPH_LEFT_RIGHT_COHERENCE = False  # True: (Left - Right), False: Average
 AVERAGE_TRENDLINE_PERIOD = 30       # Moving average window (smaller = faster response)
 WINDOW_SECONDS = 60                 # View history
 UPDATE_FPS = 10                     # Updates per second
-SF = 256                            # Muse Sampling Frequency
-
-# Band Definitions
-BANDS = {'Delta(0.5-4Hz)': (0.5, 4), 'Theta(4-8Hz)': (4, 8), 'Alpha(8-13Hz)': (8, 13), 'Beta(13-30Hz)': (13, 30), 'Gamma(30-45Hz)': (30, 45)}
-WAVE_COLORS = ['#CC0000', '#9933CC', '#0099CC', '#669900', '#FF8A00']
-BAND_NAMES = list(BANDS.keys())
+# SF is imported from helper
 
 class LiveMuseGraph(QtWidgets.QMainWindow):
     def __init__(self):
@@ -165,34 +161,10 @@ class LiveMuseGraph(QtWidgets.QMainWindow):
         Input: (Samples x 4 Sensors)
         Output: List of 5 values (one per band) representing the 'Score' for that band.
         """
-        # Calculate Power Spectral Density (PSD) using Welch's method
-        # Transpose data so channels are rows
-        nperseg = min(len(eeg_data), SF) # 1-second window
-        freqs, psd = welch(eeg_data.T, SF, nperseg=nperseg)
-        
-        # psd shape is now (4 Sensors, Frequency Bins)
-        
-        band_powers = []
-        for band_name in BAND_NAMES:
-            low, high = BANDS[band_name]
-            # Find frequencies in this band
-            idx = np.logical_and(freqs >= low, freqs <= high)
-            
-            if GRAPH_LEFT_RIGHT_COHERENCE:
-                # Left (TP9, AF7) vs Right (AF8, TP10)
-                # Assuming standard order: TP9, AF7, AF8, TP10
-                left_power = np.mean(psd[0:2, idx])
-                right_power = np.mean(psd[2:4, idx])
-                power = left_power - right_power
-            else:
-                # Average of all 4 sensors
-                power = np.mean(psd[:, idx])
-            
-            # Convert to Log scale (Bels) to match Mind Monitor style
-            # Adding 1e-6 to avoid log(0)
-            band_powers.append(np.log10(power + 1e-6))
-            
-        return band_powers
+        # Call the helper function
+        # helper expects (Samples, Sensors) or (Sensors, Samples).
+        # We pass eeg_data which is (Samples, 4) usually.
+        return calculate_band_powers(eeg_data, sf=SF, left_right_coherence=GRAPH_LEFT_RIGHT_COHERENCE)
 
     def update(self):
         # 1. Get new Raw EEG data
