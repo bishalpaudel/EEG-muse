@@ -115,6 +115,13 @@ class Quadrants(QtWidgets.QMainWindow):
             self.inlet = StreamInlet(streams[0])
             self.x_axis = np.linspace(-WINDOW_SECONDS, 0, BUFFER_SIZE)
             
+            # Reset X Ranges for all plots (in case coming from static playback)
+            # Global Avg
+            self.graph_widget.getItem(0, 0).setXRange(-WINDOW_SECONDS, 0)
+            # Individual Sensors
+            for _, _, r, c in SENSOR_LAYOUT:
+                 self.graph_widget.getItem(r, c).setXRange(-WINDOW_SECONDS, 0)
+
             # Start Update Loop
             self.timer = QtCore.QTimer()
             self.timer.setInterval(33) # ~30 FPS

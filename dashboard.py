@@ -17,6 +17,45 @@ except ImportError as e:
 # ... (Imports remain the same, but we need subprocess)
 import subprocess
 
+# Helper Class for Searchable ComboBox
+class ExtendedComboBox(QtWidgets.QComboBox):
+    def __init__(self, parent=None):
+        super(ExtendedComboBox, self).__init__(parent)
+        self.setFocusPolicy(QtCore.Qt.FocusPolicy.StrongFocus)
+        self.setEditable(True)
+
+        # add a filter model to filter matching items
+        self.pFilterModel = QtCore.QSortFilterProxyModel(self)
+        self.pFilterModel.setFilterCaseSensitivity(QtCore.Qt.CaseSensitivity.CaseInsensitive)
+        self.pFilterModel.setSourceModel(self.model())
+
+        # add a completer, which uses the filter model
+        self.completer = QtWidgets.QCompleter(self.pFilterModel, self)
+        # always show all (filtered) completions
+        self.completer.setCompletionMode(QtWidgets.QCompleter.CompletionMode.UnfilteredPopupCompletion)
+        self.setCompleter(self.completer)
+
+        # connect signals
+        self.lineEdit().textEdited.connect(self.pFilterModel.setFilterFixedString)
+        self.completer.activated.connect(self.on_completer_activated)
+
+    def on_completer_activated(self, text):
+        if text:
+            index = self.findText(text)
+            self.setCurrentIndex(index)
+            # self.activated[str].emit(self.itemText(index))
+
+    def setModel(self, model):
+        super(ExtendedComboBox, self).setModel(model)
+        self.pFilterModel.setSourceModel(model)
+        self.completer.setModel(self.pFilterModel)
+
+    def setModelColumn(self, column):
+        self.completer.setCompletionColumn(column)
+        self.pFilterModel.setFilterKeyColumn(column)
+        super(ExtendedComboBox, self).setModelColumn(column)
+
+
 class MuseMasterLauncher(QtWidgets.QMainWindow):
     def __init__(self):
         super().__init__()
@@ -48,11 +87,34 @@ class MuseMasterLauncher(QtWidgets.QMainWindow):
         self.btn_record.clicked.connect(self.toggle_recording)
         control_layout.addWidget(self.btn_record)
         
-        # 2. Load Recording Button
-        self.btn_load = QtWidgets.QPushButton("Load Recording (Playback)")
-        self.btn_load.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 10px;")
-        self.btn_load.clicked.connect(self.load_recording_dialog)
-        control_layout.addWidget(self.btn_load)
+        # 2. Playback Controls (Dropdown + Play Button)
+        playback_layout = QtWidgets.QHBoxLayout()
+        
+        self.combo_files = ExtendedComboBox()
+        self.combo_files.setMinimumWidth(300)
+        self.combo_files.setStyleSheet("padding: 8px;")
+        self.update_file_list()
+        playback_layout.addWidget(self.combo_files)
+        
+        self.btn_play = QtWidgets.QPushButton("Load & Play")
+        self.btn_play.setStyleSheet("background-color: #2196F3; color: white; font-weight: bold; padding: 10px;")
+        self.btn_play.clicked.connect(self.on_play_clicked)
+        playback_layout.addWidget(self.btn_play)
+        
+        self.btn_live = QtWidgets.QPushButton("Switch to Live")
+        self.btn_live.setStyleSheet("background-color: #FF9800; color: white; font-weight: bold; padding: 10px;")
+        self.btn_live.clicked.connect(self.switch_to_live)
+        self.btn_live.hide() # Hidden by default, shown when in Playback
+        playback_layout.addWidget(self.btn_live)
+        
+        self.btn_refresh = QtWidgets.QPushButton("↻")
+        self.btn_refresh.setToolTip("Refresh File List")
+        self.btn_refresh.setMaximumWidth(40)
+        self.btn_refresh.setStyleSheet("padding: 10px;")
+        self.btn_refresh.clicked.connect(self.update_file_list)
+        playback_layout.addWidget(self.btn_refresh)
+        
+        control_layout.addLayout(playback_layout)
         
         self.layout.addLayout(control_layout)
         
@@ -80,14 +142,29 @@ class MuseMasterLauncher(QtWidgets.QMainWindow):
             self.playback_process.terminate()
         super().closeEvent(event)
 
-    def load_recording_dialog(self):
+    def update_file_list(self):
+        self.combo_files.clear()
+        
         start_dir = os.path.join(os.getcwd(), 'recordings')
         if not os.path.exists(start_dir):
-            start_dir = os.getcwd()
+            os.makedirs(start_dir)
             
-        fname, _ = QtWidgets.QFileDialog.getOpenFileName(self, 'Open recorded Raw CSV', start_dir, "CSV Files (*.csv)")
-        if fname:
-            self.switch_to_playback(fname)
+        files = [f for f in os.listdir(start_dir) if f.endswith('.csv')]
+        files.sort(reverse=True) # Show newest first
+        self.combo_files.addItems(files)
+
+    def on_play_clicked(self):
+        filename = self.combo_files.currentText()
+        if not filename:
+            return
+            
+        start_dir = os.path.join(os.getcwd(), 'recordings')
+        full_path = os.path.join(start_dir, filename)
+        
+        if os.path.exists(full_path):
+            self.switch_to_playback(full_path)
+        else:
+            QtWidgets.QMessageBox.warning(self, "File Not Found", f"Could not find file: {filename}")
 
     def switch_to_playback(self, filename):
         print(f"Switching to static playback: {filename}")
@@ -121,6 +198,40 @@ class MuseMasterLauncher(QtWidgets.QMainWindow):
                 
         self.status_label.hide()
         self.tabs.show()
+        
+        # 5. UI Toggles
+        self.btn_live.show()
+        # Optional: Disable play button if we want to force switching to live first, 
+        # but users might want to switch file-to-file directly.
+        
+    def switch_to_live(self):
+        print("Switching BACK to Live Mode...")
+        self.mode = "LIVE"
+        self.setWindowTitle("Brainwave Master Dashboard (Live)")
+        
+        # 1. UI Updates
+        self.btn_live.hide()
+        self.status_label.setText("Resuming Live Stream...")
+        self.status_label.show()
+        
+        self.btn_record.setEnabled(True)
+        self.btn_record.setText("Start Recording")
+        self.btn_record.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold; padding: 10px;")
+        
+        # 2. Tell Tabs to Resume Stream
+        # If tabs aren't loaded yet, we just start the timer, 
+        # but if they ARE loaded, we need to call load_stream()
+        
+        if self.loaded:
+            for i in range(self.tabs.count()):
+                widget = self.tabs.widget(i)
+                if hasattr(widget, 'load_stream'):
+                    # Force reload of stream
+                    widget.load_stream()
+            self.status_label.hide()
+        else:
+            # If not loaded, restart the check timer
+            self.check_stream_timer.start()
 
     def toggle_recording(self):
         is_recording = self.btn_record.isChecked()

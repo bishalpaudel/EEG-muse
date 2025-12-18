@@ -52,6 +52,9 @@ class LiveMuseGraph(QtWidgets.QMainWindow):
             self.inlet_markers = StreamInlet(marker_streams[0])
             print("Marker stream found.")
 
+        # Reset View (in case returning from static)
+        self.plot.setXRange(-WINDOW_SECONDS, 0)
+
         # Start Update Loop
         self.timer = QtCore.QTimer()
         self.timer.setInterval(int(1000 / UPDATE_FPS))
