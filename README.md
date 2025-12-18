@@ -69,7 +69,7 @@ muselsl stream
 ### 2. Run the Dashboard
 Open a second terminal and launch the application:
 ```bash
-python muse_master.py
+python dashboard.py
 ```
 
 ### 3. Select Mode
@@ -80,17 +80,26 @@ A dialog will appear asking you to choose a mode:
 *   **Playback Recording**: Select a previously recorded `.csv` file.
     *   The app will launch a simulate stream (`muse_playback_lsl.py`) in the background and connect the dashboard to it.
 
-## File Structure
+### 4. Compare Recordings
+The dashboard includes a powerful **Comparison Tool** to analyze two sessions side-by-side.
 
-*   `muse_master.py`: **Entry point**. Handles the main window, mode selection, and recording control.
+1.  Click the purple **"Compare"** button in the dashboard.
+2.  **Select Files**: Choose two recordings to compare.
+3.  **Visual Trends**: View high-contrast plots (Cyan vs Magenta) of band power over time.
+4.  **Statistical Analysis**: Switch to the "Stats" tab to perform a Welch's t-test, calculating significance (p-value), mean differences, and viewing distribution histograms.
+
+![Comparison Visuals](https://imgur.com/1pHNtC5.png)
+![Comparison Stats](https://imgur.com/1ce8ErX.png)
+
+## File Structure
+*   `dashboard.py`: **Entry point**. Handles the main window, live/playback modes, and recording.
+*   `compare_window.py`: The UI for comparing two recordings (visuals + stats).
+*   `compare_stat.py`: Statistical logic (Welch's t-test, outlier removal) for the comparison tool.
+*   `analysis_helper.py`: Shared signal processing logic (FFT/Band Power calculations).
 *   `muse_recorder.py`: Logic for saving the raw LSL stream to CSV.
 *   `muse_playback_lsl.py`: Script that acts as a mock device, replaying a CSV file to LSL.
-*   `stream_helper.py`: Utility to ensure Playback mode connects to the replay stream and not a live device.
-*   **Visualizers**:
-    *   `muse_dashboard.py`: Main overview.
-    *   `muse_waves.py`: Raw signal lines.
-    *   `muse_live_graph.py`: Band power trends.
-    *   `muse_quadrants.py` & others: Specialized views.
+*   `quadrants.py`: Visualization for quadrant-based brain activity.
+*   `live_graph.py`: Real-time band power trend graph.
 
 ## Troubleshooting
 
