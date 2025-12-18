@@ -227,6 +227,21 @@ class CompareWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.warning(self, "Error", "Could not process one or both files.")
             return
 
+        # Time Balancing: Crop to shorter duration
+        min_len = min(len(t_a), len(t_b))
+        
+        # Truncate A
+        t_a = t_a[:min_len]
+        for name in BAND_NAMES:
+            data_a[name] = data_a[name][:min_len]
+            
+        # Truncate B
+        t_b = t_b[:min_len]
+        for name in BAND_NAMES:
+            data_b[name] = data_b[name][:min_len]
+
+        print(f"Comparison cropped to {t_a[-1]:.1f} seconds (Length: {min_len})")
+
         # Store data for stats
         self.current_data_a = data_a
         self.current_data_b = data_b
@@ -235,8 +250,9 @@ class CompareWindow(QtWidgets.QMainWindow):
         for name in BAND_NAMES:
             self.curves_a[name].setData(t_a, data_a[name])
             self.curves_b[name].setData(t_b, data_b[name])
-            max_t = max(t_a[-1], t_b[-1])
-            self.plots[name].setXRange(0, max_t)
+            
+            # Adjust ranges
+            self.plots[name].setXRange(0, t_a[-1])
             
         # 2. Update Stats (initially whatever is selected)
         self.update_stats_view()
